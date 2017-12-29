@@ -6,11 +6,11 @@ import (
 	"io/ioutil"
 	"time"
 
-	"os"
-
 	"net/http"
 
 	"errors"
+
+	"flag"
 
 	"github.com/gin-gonic/gin"
 )
@@ -26,14 +26,19 @@ type fileData struct {
 var ds = make([]fileData, 1)
 
 func main() {
-	readDataFile(os.Args[2])
+	var filePath, port string
+	flag.StringVar(&filePath, "f", "", "Data file path")
+	flag.StringVar(&port, "p", "9292", "Server port")
+	flag.Parse()
+	if err := readDataFile(filePath); err != nil {
+		panic(err)
+	}
 
 	gin.SetMode(gin.ReleaseMode)
 	e := gin.New()
 	e.GET("*uri", func(c *gin.Context) { handleReq(c, "GET") })
 	e.POST("*uri", func(c *gin.Context) { handleReq(c, "POST") })
 
-	port := os.Args[1]
 	fmt.Printf("Listen on port %s\n", port)
 	for _, d := range ds {
 		fmt.Printf("%s: %s\n", d.Method, d.Uri)
@@ -69,15 +74,19 @@ func getData(method string, uri string) (fileData, error) {
 	return fileData{}, errors.New("URI not found")
 }
 
-func readDataFile(filePath string) {
-	fmt.Printf("Reading file [%s]\n", filePath)
+func readDataFile(filePath string) error {
+	if filePath == "" {
+		return errors.New("missing data file")
+	}
+
+	fmt.Printf("Reading data file [%s]\n", filePath)
 	raw, err := ioutil.ReadFile(filePath)
 	if err != nil {
-		panic(err)
+		return err
 	}
 
 	if err = json.Unmarshal(raw, &ds); err != nil {
-		panic(err)
+		return err
 	}
 
 	for i, v := range ds {
@@ -85,4 +94,6 @@ func readDataFile(filePath string) {
 			ds[i].Method = "GET"
 		}
 	}
+
+	return nil
 }
