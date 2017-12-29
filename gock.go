@@ -46,7 +46,7 @@ func handleReq(c *gin.Context, method string) {
 	uri := c.Request.RequestURI
 	d, err := getData(method, uri)
 	if err != nil {
-		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"Message": "Unknown uri"})
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"Error": "Unknown uri"})
 		return
 	}
 
