@@ -2,98 +2,151 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
+	"flag"
 	"fmt"
 	"io/ioutil"
-	"time"
-
 	"net/http"
-
-	"errors"
-
-	"flag"
+	"net/url"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
 
+type Uri = string
+type Method = string
+type controllers = map[Uri]map[Method][]*data
+
+type data struct {
+	params   map[string]string
+	headers  map[string]string
+	delay    time.Duration
+	response []byte
+}
+
 type fileData struct {
-	Uri      string
-	Method   string
+	Uri
+	Method
+	Params   map[string]string
 	Headers  map[string]string
 	Delay    time.Duration
 	Response interface{}
 }
 
-var ds = make([]fileData, 1)
+const jsonContentType = "application/json; charset=utf-8"
 
 func main() {
 	var filePath, port string
 	flag.StringVar(&filePath, "f", "", "Data file path")
 	flag.StringVar(&port, "p", "9292", "Server port")
 	flag.Parse()
-	if err := readDataFile(filePath); err != nil {
+
+	fds, err := readDataFile(filePath)
+	if err != nil {
+		panic(err)
+	}
+
+	cs, err := toControllers(fds)
+	if err != nil {
 		panic(err)
 	}
 
 	gin.SetMode(gin.ReleaseMode)
 	e := gin.New()
-	e.GET("*uri", func(c *gin.Context) { handleReq(c, "GET") })
-	e.POST("*uri", func(c *gin.Context) { handleReq(c, "POST") })
 
-	fmt.Printf("Listen on port %s\n", port)
-	for _, d := range ds {
-		fmt.Printf("%s: %s\n", d.Method, d.Uri)
+	for uri, vs := range cs {
+		for method, ds := range vs {
+			fmt.Printf("%s: %s\n", method, uri)
+
+			switch method {
+			case "GET":
+				e.GET(uri, func(c *gin.Context) { handleReq(c, ds) })
+			case "POST":
+				e.POST(uri, func(c *gin.Context) { handleReq(c, ds) })
+			}
+		}
 	}
 
+	fmt.Printf("Listen on port %s\n", port)
 	e.Run(fmt.Sprintf(":%s", port))
 }
 
-func handleReq(c *gin.Context, method string) {
-	uri := c.Request.RequestURI
-	d, err := getData(method, uri)
-	if err != nil {
-		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"Error": "Unknown uri"})
-		return
-	}
-
-	fmt.Printf("%s %s: %s\n", time.Now().Format("2006-01-02T15:04:05.999"), d.Method, d.Uri)
-
-	time.Sleep(d.Delay * time.Millisecond)
-
-	for k, v := range d.Headers {
-		c.Header(k, v)
-	}
-	c.JSON(http.StatusOK, &d.Response)
-}
-
-func getData(method string, uri string) (fileData, error) {
+func handleReq(c *gin.Context, ds []*data) {
 	for _, d := range ds {
-		if d.Uri == uri && d.Method == method {
-			return d, nil
+		if containAllParams(d.params, c.Request.URL.Query()) {
+			fmt.Printf("%s %s: %s\n", time.Now().Format("2006-01-02T15:04:05.999"), c.Request.Method, c.Request.RequestURI)
+			time.Sleep(d.delay * time.Millisecond)
+			c.Data(http.StatusOK, jsonContentType, d.response)
+			return
 		}
 	}
-	return fileData{}, errors.New("URI not found")
+	c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"Error": "uri not mapped"})
 }
 
-func readDataFile(filePath string) error {
+func containAllParams(dataParams map[string]string, reqParams url.Values) bool {
+	for p, v1 := range dataParams {
+		v2 := reqParams.Get(p)
+		if v1 != v2 {
+			return false
+		}
+	}
+	return true
+}
+
+func readDataFile(filePath string) (fds []fileData, err error) {
 	if filePath == "" {
-		return errors.New("missing data file")
+		return nil, errors.New("missing data file")
 	}
 
 	fmt.Printf("Reading data file [%s]\n", filePath)
 	raw, err := ioutil.ReadFile(filePath)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	if err = json.Unmarshal(raw, &ds); err != nil {
-		return err
+	if err = json.Unmarshal(raw, &fds); err != nil {
+		return nil, err
 	}
 
-	for i, v := range ds {
+	for i, v := range fds {
 		if v.Method == "" {
-			ds[i].Method = "GET"
+			fds[i].Method = "GET"
 		}
 	}
 
-	return nil
+	return fds, nil
+}
+
+func toControllers(fds []fileData) (cs controllers, err error) {
+	for _, fd := range fds {
+		d, err := toData(fd)
+		if err != nil {
+			return nil, err
+		}
+
+		cs = make(controllers)
+
+		if x, ok := cs[fd.Uri]; ok {
+			if y, ok := x[fd.Method]; ok {
+				cs[fd.Uri][fd.Method] = append(y, d)
+				continue
+			}
+		}
+		cs[fd.Uri] = make(map[Method][]*data)
+		cs[fd.Uri][fd.Method] = []*data{d}
+	}
+	return
+}
+
+func toData(fd fileData) (*data, error) {
+	bs, err := json.Marshal(fd.Response)
+	if err != nil {
+		return nil, errors.New(fmt.Sprintf("cannot marshal response %v", err))
+	}
+	return &data{
+		params:   fd.Params,
+		headers:  fd.Headers,
+		delay:    fd.Delay,
+		response: bs,
+	}, nil
 }
