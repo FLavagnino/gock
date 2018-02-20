@@ -16,21 +16,22 @@ import (
 type Uri = string
 type Method = string
 type controllers = map[Uri]map[Method][]*data
+type params map[string]string
 
 type data struct {
-	params   map[string]string
-	headers  map[string]string
-	delay    time.Duration
-	response []byte
+	params
+	responseHeaders map[string]string
+	delayInMs       time.Duration
+	response        []byte
 }
 
 type fileData struct {
 	Uri
 	Method
-	Params   map[string]string
-	Headers  map[string]string
-	Delay    time.Duration
-	Response interface{}
+	Params          map[string]string
+	ResponseHeaders map[string]string `json:"response_headers"`
+	DelayInMs       time.Duration     `json:"delay_in_ms"`
+	Response        interface{}
 }
 
 const jsonContentType = "application/json; charset=utf-8"
@@ -73,24 +74,19 @@ func main() {
 
 func handleReq(c *gin.Context, ds []*data) {
 	for _, d := range ds {
-		if containAllParams(d.params, c.Request.URL.Query()) {
+		if d.params.equalsTo(c.Request.URL.Query()) {
 			fmt.Printf("%s %s: %s\n", time.Now().Format("2006-01-02T15:04:05.999"), c.Request.Method, c.Request.RequestURI)
-			time.Sleep(d.delay * time.Millisecond)
+			time.Sleep(d.delayInMs * time.Millisecond)
+
+			for k, v := range d.responseHeaders {
+				c.Header(k, v)
+			}
+
 			c.Data(http.StatusOK, jsonContentType, d.response)
 			return
 		}
 	}
 	c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"Error": "uri not mapped"})
-}
-
-func containAllParams(dataParams map[string]string, reqParams url.Values) bool {
-	for p, v1 := range dataParams {
-		v2 := reqParams.Get(p)
-		if v1 != v2 {
-			return false
-		}
-	}
-	return true
 }
 
 func readDataFile(filePath string) (fds []fileData, err error) {
@@ -145,9 +141,22 @@ func toData(fd fileData) (*data, error) {
 		return nil, errors.New(fmt.Sprintf("cannot marshal response %v", err))
 	}
 	return &data{
-		params:   fd.Params,
-		headers:  fd.Headers,
-		delay:    fd.Delay,
-		response: bs,
+		params:          fd.Params,
+		responseHeaders: fd.ResponseHeaders,
+		delayInMs:       fd.DelayInMs,
+		response:        bs,
 	}, nil
+}
+
+func (ps params) equalsTo(reqParams url.Values) bool {
+	if len(ps) != len(reqParams) {
+		return false
+	}
+	for h, v1 := range ps {
+		v2 := reqParams.Get(h)
+		if v1 != v2 {
+			return false
+		}
+	}
+	return true
 }
