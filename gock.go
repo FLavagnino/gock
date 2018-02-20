@@ -118,22 +118,23 @@ func readDataFile(filePath string) (fds []fileData, err error) {
 }
 
 func toControllers(fds []fileData) (cs controllers, err error) {
+	cs = make(controllers)
 	for _, fd := range fds {
 		d, err := toData(fd)
 		if err != nil {
 			return nil, err
 		}
 
-		cs = make(controllers)
-
 		if x, ok := cs[fd.Uri]; ok {
 			if y, ok := x[fd.Method]; ok {
 				cs[fd.Uri][fd.Method] = append(y, d)
-				continue
+			} else {
+				x[fd.Method] = []*data{d}
 			}
+		} else {
+			cs[fd.Uri] = make(map[Method][]*data)
+			cs[fd.Uri][fd.Method] = []*data{d}
 		}
-		cs[fd.Uri] = make(map[Method][]*data)
-		cs[fd.Uri][fd.Method] = []*data{d}
 	}
 	return
 }
