@@ -10,6 +10,8 @@ import (
 	"net/url"
 	"time"
 
+	"math/rand"
+
 	"github.com/gin-gonic/gin"
 )
 
@@ -22,6 +24,7 @@ type data struct {
 	params
 	responseHeaders map[string]string
 	delayInMs       time.Duration
+	deltaDelay      int
 	response        []byte
 }
 
@@ -30,7 +33,8 @@ type fileData struct {
 	Method
 	Params          map[string]string
 	ResponseHeaders map[string]string `json:"response_headers"`
-	DelayInMs       time.Duration     `json:"delay_in_ms"`
+	MaxDelayInMs    time.Duration     `json:"max_delay_in_ms"`
+	MinDelayInMs    time.Duration     `json:"min_delay_in_ms"`
 	Response        interface{}
 }
 
@@ -38,7 +42,7 @@ const jsonContentType = "application/json; charset=utf-8"
 
 func main() {
 	var filePath, port string
-	flag.StringVar(&filePath, "f", "", "Data file path")
+	flag.StringVar(&filePath, "f", "/home/facu/mockk.json", "Data file path")
 	flag.StringVar(&port, "p", "9292", "Server port")
 	flag.Parse()
 
@@ -76,7 +80,12 @@ func handleReq(c *gin.Context, ds []*data) {
 	for _, d := range ds {
 		if d.params.equalsTo(c.Request.URL.Query()) {
 			fmt.Printf("%s %s: %s\n", time.Now().Format("2006-01-02T15:04:05.999"), c.Request.Method, c.Request.RequestURI)
-			time.Sleep(d.delayInMs * time.Millisecond)
+
+			var delta time.Duration
+			if d.deltaDelay > 0 {
+				delta = time.Duration(rand.Intn(d.deltaDelay))
+			}
+			time.Sleep((d.delayInMs + delta) * time.Millisecond)
 
 			for k, v := range d.responseHeaders {
 				c.Header(k, v)
@@ -140,10 +149,17 @@ func toData(fd fileData) (*data, error) {
 	if err != nil {
 		return nil, errors.New(fmt.Sprintf("cannot marshal response %v", err))
 	}
+
+	var deltaDelay int
+	if d := fd.MaxDelayInMs - fd.MinDelayInMs; d > 0 {
+		deltaDelay = int(d)
+	}
+
 	return &data{
 		params:          fd.Params,
 		responseHeaders: fd.ResponseHeaders,
-		delayInMs:       fd.DelayInMs,
+		delayInMs:       fd.MinDelayInMs,
+		deltaDelay:      deltaDelay,
 		response:        bs,
 	}, nil
 }
